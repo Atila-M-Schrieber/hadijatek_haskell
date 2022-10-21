@@ -47,6 +47,7 @@ type Fields = [Field]
 type Turn = (Int, [Order]) -- TeamID, their orders - pretty useless
 type Orders = [Order]
 type Adjacencies = Matrix Int
+type BothAdjacencies = (Adjacencies, Adjacencies)
 
 instance Show Team where
   show (Team i n c bs) = -- 
@@ -123,8 +124,8 @@ readOrder entry = --
         (read (dropUntilN 2 ',' entry) :: (Bool, [Int]))
         Unresolved-- 
 
--- readMatrix :: String -> Adjacencies
--- readMatrix entries = fromLists $ map (\line -> read line :: [Int]) $ lines entries
+readMatrix :: String -> Adjacencies
+readMatrix entries = M.fromLists $ map (\line -> read line :: [Int]) $ lines entries
 
 -- Fetch all instances of data from .hmap or .turn
 fetchTeams :: String -> Teams -- input whole .hmap
@@ -141,6 +142,10 @@ fetchOrders turn = map readOrder . lines $ turn
 
 fetchTurn :: Int -> String -> Turn -- teamID (from file name), input whole .turn
 fetchTurn tid turn = (tid, map readOrder . lines $ turn)
+
+fetchAdjacencies :: String -> (Adjacencies, Adjacencies)
+fetchAdjacencies adjsFile = (getSection takeUntils', getSection dropUntils)
+  where getSection f = readMatrix $ f "\n---\n" adjsFile
 
 -- all data to hmap file
 dataToHmap :: Lang -> Int -> String -> String -> String -> Teams -> Fields -> Units -> String
@@ -175,9 +180,9 @@ fieldTitle lang teams field = --
 
 teamOfOrder :: Teams -> Units -> Order -> Maybe Team -- Returns team that issued the order, Nothing if invalid
 teamOfOrder teams units order = -- 
-  if tidUnit == []
+  if null tidUnit
     then
-      if tidHomeBase == []
+      if null tidHomeBase || orderType order /= 5
         then Nothing
         else Just $ teams !! head tidHomeBase
     else Just $ teams !! head tidUnit
@@ -212,7 +217,7 @@ orderName lang order = --
 showOrderToActions :: Lang -> Teams -> Fields -> Units -> Order -> String 
 showOrderToActions lang teams fields units (Order f _ (_,_) _) = -- 
   fieldName (fields !! f) ++ " " ++
-  teamName (fromJust . teamOfOrder teams units $ order) ++ " " ++
+  maybe "?" teamName (teamOfOrder teams units order) ++ " " ++
   unitName lang (Left . head . filter (\u -> unitField u == f) $ units) ++ " "
   where
     order = Order f 0 (True,[]) Unresolved-- 
@@ -278,7 +283,7 @@ inPolygon (x3, y3) coords = intersects `mod` 2 == 1--
 
 fieldsAreNeighbors :: Field -> Field -> Bool
 fieldsAreNeighbors (Field _ t1 _ _ _ path1) (Field _ t2 _ _ _ path2) = -- 
-  (1 < length (intersect coord1 coord2) -- If there are at least 2 overlapping coordinates
+  (0 < length (intersect coord1 coord2) -- If there are at least 2 overlapping coordinates
    || (any
         (\((tl, cl), (tw, cw)) -> -- Or one contains the other (land is an island)
           (tl `elem` [1,2] && tw == 0) && all (`inPolygon` cw) cl)

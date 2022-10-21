@@ -107,8 +107,6 @@ basesToDots lang teams fields = --
      let root = fieldRoot field,
      let title = fieldTitle lang teams field]-- 
 
--- Add Commands to vectorst or something
-
 hmapDataToSvg :: Lang -> String -> String -> Teams -> Fields -> Units -> String
 hmapDataToSvg _ _ _ _ [] _ = []-- 
 hmapDataToSvg lang waterPath landPath teams fields units = unlines ([

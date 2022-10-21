@@ -102,11 +102,16 @@ cli = do
   teamNames <- getLines
   teams <- inputTeams lang (sort teamNames) fields -- 
 
+  -- Adjacencies
+  let adjs = getAdjacency fields
+  let wadjs = getWaterAdjacency fields
+
   -- Write file
   let fileName = (name ++ "_0.hmap")
   putStrLn $ ["Információ kiírása a" ++ onConsonant name (" ","z ") ++ fileName ++ " file-ba...",
               "Writing information to " ++ fileName ++ " ..." ] !! lang
   writeFile fileName $ dataToHmap lang 0 name waterStrokeColor landStrokeColor teams fields []
+  writeFile (name ++ ".adjs") $ unlines $ map show (M.toLists adjs) ++ "---" : map show (M.toLists wadjs)
   genNextOrderFiles name 1 teams
   putStrLn $ ["Kész.", "Done."] !! lang-- 
 

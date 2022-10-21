@@ -183,10 +183,7 @@ ordersPage lang passons mclear teams fields units' mtid orders progress actions 
     targetSelect unit = --
       case findAction unit of
         1 -> hidden ("target" ++ show (unitField unit)) . show $ unitField unit -- defending then targeting itself
-        3 -> defaultSelect unit "target" << -- "target" is unit to transform into
-               [option ! [value . show $ uid] << unitName lang (Right uid)
-               | uid <- [0..5]
-               , uid /= unitType unit ]
+        3 -> hidden ("target" ++ show (unitField unit)) . show $ unitField unit -- transforming then targeting itself - unitType chosen later
         _ -> defaultSelect unit "target" <<
                [option ! [value . show . fieldID $ field] << fieldName field
                | field <- fields] -- getTargetableFields fields (findAction unit) unit] -- works, but slow, just check legality @ end
@@ -216,15 +213,25 @@ ordersPage lang passons mclear teams fields units' mtid orders progress actions 
                   ]
              -}
              +++
-             label ! [thefor $ conq unit ++ "T"] << (" - " ++ ["Foglal", "Conquers"] !! lang) +++
+             label  ! [thefor $ conq unit ++ "T"] << (" - " ++ ["Foglal", "Conquers"] !! lang) +++
              (radio ! [checked, identifier (conq unit ++ "T")]) (conq unit) "True" +++
-             label ! [thefor $ conq unit ++ "F"] << [" Nem foglal", " Does not conquer"] !! lang +++
+             label  ! [thefor $ conq unit ++ "F"] << [" Nem foglal", " Does not conquer"] !! lang +++
              (radio ! [identifier (conq unit ++ "F")]) (conq unit) "False" 
         1 -> teamSelect checkbox unit
         2 -> teamSelect radio unit
+        3 -> (defaultSelect unit "affect" << -- "affect" is unit to transform into
+               [option ! [value . show $ uid] << unitName lang (Right uid)
+               | uid <- [0..5]
+               , uid /= unitType unit ])
+             +++ hidden (conq unit) "False"
+
         _ -> const noHtml unit --
 
     order unit = Order (unitField unit) (findAction unit) ((fst . findAffect $ unit), (snd . findAffect $ unit) ++ [findTarget unit]) Unresolved
+    selectPrefixAffect unit = 
+      if findAction unit == 3
+      then showOrderToTargets lang teams fields units $ Order (unitField unit) (findAction unit) (True,[]) Unresolved
+      else showOrderToAffects lang teams fields units $ Order (unitField unit) (findAction unit) (True, [findTarget unit]) Unresolved
     
     (dname, tname, selectPrefix, aspectSelect) = 
       case progress of
@@ -240,8 +247,7 @@ ordersPage lang passons mclear teams fields units' mtid orders progress actions 
              , targetSelect)
         2 -> ("affect"
              , ["Hatáskör","Affects"] !! lang
-             , \unit -> showOrderToAffects lang teams fields units $
-                Order (unitField unit) (findAction unit) (True, [findTarget unit]) Unresolved
+             , selectPrefixAffect -- needed for transform
              , affectSelect)
         3 -> ("ordersDone"
              , ["Ellenőrzés","Confirmation"] !! lang

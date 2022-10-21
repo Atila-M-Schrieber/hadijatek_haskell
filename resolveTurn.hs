@@ -8,6 +8,9 @@ import Data.List
 import Data.Maybe
 import Data.Matrix as M
 
+import qualified Debug.Trace as D
+-- import qualified Hood.Observe as D
+
 
 resolveConflict :: Lang -> Teams -> Fields -> Units -> Orders -> IO Orders
 resolveConflict lang teams fields units orders = do -- resolve a single conflict, return orders as "failed" or "unresolved"
@@ -44,7 +47,9 @@ resolveConflicts lang teams fields units orders = do -- Resolve a round of confl
       zipWith (++) [" " | i <- [0..(length orders -1)]] .
       map (showOrderPretty lang teams fields units) $ concat conflicts ++ (orders \\ (concat conflicts))
   else do return () --
-  resolved' <- sequence . map (resolveConflict lang teams fields units) $ conflicts
+  -- let tracedResolveConflict lang teams fields units conflict = trace ("rC" ++ show conflict) (tracedResolveConflict lang teams fields units conflict)
+  -- resolved' <- sequence . map (resolveConflict lang teams fields units) $ conflicts -- needs ordering of conflicts
+  resolved' <- sequence . map (resolveConflict lang teams fields units) $ conflicts -- needs ordering of conflicts
   let resolved = concat resolved' 
   let mappedOrders = --
         [order
@@ -73,6 +78,11 @@ resolveTurn lang teams fields units0 orders0 = do -- Return updated teams, field
   let applicableOrders = map (checkForDeath teams fields units orders) mappedOrders -- finds orders which kill units, make that clear
   let retreatOrders = filter (\o -> orderType o == (-1) && (not . fst . orderAffects $ o)) applicableOrders -- list of retreat orders, will be written to the .retreat (alongside which units to remove)
   let (appliedTeams, appliedUnits) = applyOrders teams fields units applicableOrders
+  putStrLn . unlines . map (\o -> "- " ++ showOrderPretty lang teams fields units o) $ orders
+  putStrLn . unlines . map (\o -> "->" ++ showOrderPretty lang teams fields units o) $ resolvedOrders
+  putStrLn . unlines . map (\o -> "=>" ++ showOrderPretty lang teams fields units o) $ mappedOrders
+  putStrLn . unlines . map (\o -> ">>" ++ showOrderPretty lang teams fields units o) $ applicableOrders
+  putStrLn . unlines . map (\u -> " " ++ showOrderToActions lang appliedTeams fields appliedUnits (Order (unitField u) 0 (True,[]) Unresolved)) $ appliedUnits
   return (appliedTeams, appliedUnits, [orders, resolvedOrders, mappedOrders, applicableOrders, retreatOrders]) --
 
 showRetreats :: Teams -> Fields -> Units -> Orders -> Orders -> String
