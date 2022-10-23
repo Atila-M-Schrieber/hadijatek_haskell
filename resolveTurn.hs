@@ -70,12 +70,12 @@ resolveAllConflicts lang teams fields units orders = do--
   then return resolved
   else resolveAllConflicts lang teams fields units resolved-- 
 
-resolveTurn :: Lang -> Teams -> Fields -> Units -> Orders -> IO (Teams, Units, [Orders])
-resolveTurn lang teams fields units0 orders0 = do -- Return updated teams, fields, units, and a list of orders, first being input orders, the rest being "intermediate" orders, and the last being retrats
+resolveTurn :: Lang -> Teams -> Fields -> BothAdjacencies -> Units -> Orders -> IO (Teams, Units, [Orders])
+resolveTurn lang teams fields badjs units0 orders0 = do -- Return updated teams, fields, units, and a list of orders, first being input orders, the rest being "intermediate" orders, and the last being retrats
   let (units, orders) = applyDeltaOrders teams fields units0 orders0 -- apply get usable units & orders
   resolvedOrders <- resolveAllConflicts lang teams fields units orders -- gets orders which are all successful
   let mappedOrders = map mapSucceededOrder resolvedOrders -- returns applicable orders
-  let applicableOrders = map (checkForDeath teams fields units orders) mappedOrders -- finds orders which kill units, make that clear
+  let applicableOrders = map (checkForDeath teams fields badjs units orders) mappedOrders -- finds orders which kill units, make that clear
   let retreatOrders = filter (\o -> orderType o == (-1) && (not . fst . orderAffects $ o)) applicableOrders -- list of retreat orders, will be written to the .retreat (alongside which units to remove)
   let (appliedTeams, appliedUnits) = applyOrders teams fields units applicableOrders
   putStrLn . unlines . map (\o -> "- " ++ showOrderPretty lang teams fields units o) $ orders
@@ -85,11 +85,11 @@ resolveTurn lang teams fields units0 orders0 = do -- Return updated teams, field
   putStrLn . unlines . map (\u -> " " ++ showOrderToActions lang appliedTeams fields appliedUnits (Order (unitField u) 0 (True,[]) Unresolved)) $ appliedUnits
   return (appliedTeams, appliedUnits, [orders, resolvedOrders, mappedOrders, applicableOrders, retreatOrders]) --
 
-showRetreats :: Teams -> Fields -> Units -> Orders -> Orders -> String
-showRetreats _ _ _ _ [] = []-- 
-showRetreats teams fields units orders (retreat:retreats) = 
-  (unlines . map orderToEntry $ possibleRetreats teams fields units orders retreat)
-  ++ showRetreats teams fields units orders retreats --
+showRetreats :: Teams -> Fields -> BothAdjacencies -> Units -> Orders -> Orders -> String
+showRetreats _ _ _ _ _ [] = []-- 
+showRetreats teams fields badjs units orders (retreat:retreats) = 
+  (unlines . map orderToEntry $ possibleRetreats teams fields badjs units orders retreat)
+  ++ showRetreats teams fields badjs units orders retreats --
 
 
 cli = do
@@ -114,11 +114,13 @@ cli = do
   let fields = fetchFields hmap
   let units = fetchUnits hmap
   let name = takeUntil '\n' . dropUntil ' ' $ hmap
+  adjs <- readFile $ name ++ ".adjs"
+  let badjs = fetchAdjacencies adjs
   let step = read (takeUntil '\n' . dropUntilN 2 ' ' $ hmap) :: Int
   let turnPaths = sort $ filter (=~ (name ++ "_" ++ show (step +1) ++ "_[0-9].*" ++ "\\.turn$")) paths'
   turns' <- sequence . map readFile $ turnPaths
   let orders = concat . map fetchOrders $ turns'
-  (appliedTeams, appliedUnits, allOrders) <- resolveTurn lang teams fields units orders
+  (appliedTeams, appliedUnits, allOrders) <- resolveTurn lang teams fields badjs units orders
   let nextHmapName' = hmapName =~ "_[0-9].*\\." :: (String, String, String)
   let nextHmapName = fst' nextHmapName' ++ "_" ++ show (step +1) ++ ".hmap"
   let waterPath = dropUntils ": " $ lines hmap !! 2
@@ -130,7 +132,7 @@ cli = do
   let retreatsName = fst' nextHmapName' ++ "_" ++ show (step +1) ++ ".retreats"
   putStrLn $ ["Visszavonulások kiírása " ++ retreatsName ++ " -ba...",
               "Writing retreats to " ++ retreatsName ++ " ..."] !! lang
-  writeFile retreatsName $ showRetreats appliedTeams fields appliedUnits (head allOrders) (last allOrders) -- head being applied delta orders, last being retreat orders
+  writeFile retreatsName $ showRetreats appliedTeams fields badjs appliedUnits (head allOrders) (last allOrders) -- head being applied delta orders, last being retreat orders
   genNextOrderFiles name (step +2) teams
   putStrLn $ ["Kész.", "Done."] !! lang --
 

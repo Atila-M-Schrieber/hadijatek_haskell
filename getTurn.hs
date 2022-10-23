@@ -48,9 +48,9 @@ resetButton lang passons =
 
 resetPage :: Lang -> Maybe String -> Maybe String -> Maybe String -> IO Html
 resetPage lang mtid mturnPath mreset = do
-  clearTemps "actiontemp"
-  clearTemps "targettemp"
-  clearTemps "affecttemp"
+  clearTemps "temps/actiontemp"
+  clearTemps "temps/targettemp"
+  clearTemps "temps/affecttemp"
   clearOrders
   return $ page (["Újrakezdés", "Reset"] !! lang) body
   where
@@ -147,19 +147,20 @@ newUnitsPage lang passons mField mType mturnPath step teams fields units mtid or
                ,hidden "clearTemps" "True"
                ,submit "" (["Tovább", "Next"] !! lang) ]) --}}}
 
-ordersPage :: Lang -> Passons -> Maybe String -> Teams -> Fields -> Units -> Maybe String -> Orders -> Int ->  [(Int,Int)] -> [(Int,Int)] -> [(Int,(Bool, [Int]))] -> IO Html
-ordersPage lang passons mclear teams fields units' mtid orders progress actions targets affects = do -- gets actions of units
-  clearTemps (hasBeenSubmitted actions) "actiontemp"
-  clearTemps (hasBeenSubmitted targets) "targettemp"
-  clearTemps (hasBeenSubmitted affects) "affecttemp"
+ordersPage :: Lang -> Passons -> Maybe String -> Teams -> Fields -> BothAdjacencies -> Units -> Maybe String -> Orders -> Int ->  [(Int,Int)] -> [(Int,Int)] -> [(Int,(Bool, [Int]))] -> IO Html
+ordersPage lang passons mclear teams fields badjs units' mtid orders progress actions targets affects = do -- gets actions of units
+  clearTemps (hasBeenSubmitted actions) "temps/actiontemp"
+  clearTemps (hasBeenSubmitted targets) "temps/targettemp"
+  clearTemps (hasBeenSubmitted affects) "temps/affecttemp"
   unless (progress == 0) $ 
     case progress of
-      1 -> writeFile ("actiontemp" ++ show tid) $ show actions
-      2 -> writeFile ("targettemp" ++ show tid) $ show targets
-      3 -> writeFile ("affecttemp" ++ show tid) $ show affects
+      1 -> writeFile ("temps/actiontemp" ++ tid') $ show actions
+      2 -> writeFile ("temps/targettemp" ++ tid') $ show targets
+      3 -> writeFile ("temps/affecttemp" ++ tid') $ show affects
   return $ page title body -- gets actions of orders
   where
-    tid = read (fromJust mtid) :: Int
+    tid = maybe 0 (\s -> read s :: Int) mtid
+    -- tid = read (fromJust mtid) :: Int
     tid' = maybe "" id mtid
     clearTemps b ss = when (isJust mclear || b) $ writeFile (ss ++ tid') ""
     hasBeenSubmitted as = length as > length units -- clears if "going back"
@@ -200,7 +201,7 @@ ordersPage lang passons mclear teams fields units' mtid orders progress actions 
       hidden (conq unit) "False"
     affectSelect unit = --
       case findAction unit of
-        0 -> (if fields !! (findTarget unit) `elem` nAwayOn fields 2 1 (fields !! unitField unit) || unitField unit == findTarget unit -- (conquer in place)
+        0 -> (if fields !! (findTarget unit) `elem` nAwayOn fields badjs 2 1 (fields !! unitField unit) || unitField unit == findTarget unit -- (conquer in place)
               then noHtml
               else defaultSelect unit "affect" <<
                 [option ! [value . show . fieldID $ field] << fieldName field
@@ -290,9 +291,9 @@ ordersPage lang passons mclear teams fields units' mtid orders progress actions 
 
 submitPage :: Lang -> Maybe String -> Maybe String -> Maybe String -> Teams -> Fields -> Units -> Orders -> [(Int,Int)] -> [(Int,Int)] -> [(Int,(Bool, [Int]))] -> IO Html
 submitPage lang mturnPath mordersDone mtid teams fields units' orders actions targets affects = do
-  clearTemps "actiontemp"
-  clearTemps "targettemp"
-  clearTemps "affecttemp"
+  clearTemps "temps/actiontemp"
+  clearTemps "temps/targettemp"
+  clearTemps "temps/affecttemp"
   when (isJust mordersDone)
     . appendFile (fromJust mturnPath)
     . unlines . map (orderToEntry . newOrder) $ units
@@ -313,10 +314,10 @@ submitPage lang mturnPath mordersDone mtid teams fields units' orders actions ta
     title = ["Parancsok leadva", "Orders submitted"] !! lang
     body = 
       paragraph << ["Parancsok leadva", "Orders submitted"] !! lang +++
-      paragraph << (unlines . map (show . findAffect) $ units) +++
-      paragraph << (show units) +++
-      paragraph << (show affects) +++
-      paragraph << (unlines . map (show . newOrder) $ units) +++
+      -- paragraph << (unlines . map (show . findAffect) $ units) +++
+      -- paragraph << (show units) +++
+      -- paragraph << (show affects) +++
+      -- paragraph << (unlines . map (show . newOrder) $ units) +++
       form ! [method "post"] << 
         [hidden "clearTemps" "True"
         ,submit "" (["Kész", "Done"] !! lang) ] --}}}
@@ -352,6 +353,8 @@ cgiMain = do
   let fields = fetchFields hmap
   let units = fetchUnits hmap
   let name = takeUntil '\n' . dropUntil ' ' $ hmap
+  adjs <- liftIO . readFile $ name ++ ".adjs"
+  let badjs = fetchAdjacencies adjs
   auths' <- liftIO . readFile $ name ++ ".passwords"
   let auths = read auths' :: [(Int,String)]
   let step = (read (takeUntil '\n' . dropUntilN 2 ' ' $ hmap) :: Int) + 1
@@ -375,9 +378,9 @@ cgiMain = do
   -- Orders
   clearTemps <- getInput "clearTemps"
   let mtid = maybe "" id tid
-  actions' <- liftIO $ S.readFile $ "actiontemp" ++ mtid
-  targets' <- liftIO $ S.readFile $ "targettemp" ++ mtid
-  affects' <- liftIO $ S.readFile $ "affecttemp" ++ mtid
+  actions' <- liftIO $ S.readFile $ "temps/actiontemp" ++ mtid
+  targets' <- liftIO $ S.readFile $ "temps/targettemp" ++ mtid
+  affects' <- liftIO $ S.readFile $ "temps/affecttemp" ++ mtid
   let actions = [(f, t) --
                 | input <- allInputs
                 , fst input =~ "action.+"
@@ -425,7 +428,7 @@ cgiMain = do
   newUPage <- liftIO $ newUnitsPage lang [("passwd", passwd),("teamID",tid)] newUField newUType mturnPath step teams fields units tid orders
   let passons' = ("newUnitOrdersDone",newUnitOrdersDone) : passons
   -- oPage <- liftIO $ progress `seq` ordersPage lang passons' teams fields units tid orders progress actions targets affects
-  oPage <- liftIO $ ordersPage lang passons' clearTemps teams fields units tid orders progress actions targets affects
+  oPage <- liftIO $ ordersPage lang passons' clearTemps teams fields badjs units tid orders progress actions targets affects
   subPage <- liftIO $ submitPage lang mturnPath ordersDone tid teams fields units orders actions targets affects
   rPage <- liftIO $ resetPage lang tid mturnPath mreset
   let pages = 
@@ -433,7 +436,8 @@ cgiMain = do
         map (\page -> rejectBadPassword lang auths fields tid passwd page +++ resetButton lang passons)
           [newUPage
           ,oPage
-          ,subPage]
+          ,subPage
+          ]
         ++ [rPage] -- no passons, so fails on rejectBadPassword
   let diags = if isJust diagnostics
               then paragraph <<
@@ -444,4 +448,4 @@ cgiMain = do
 
   output . renderHtml $ diags +++ pages !! code 
 
-main = runCGI $ handleErrors cgiMain
+main = runCGI $ cgiMain
