@@ -109,15 +109,19 @@ basesToDots lang teams fields = --
 
 hmapDataToSvg :: Lang -> String -> String -> Teams -> Fields -> Units -> String
 hmapDataToSvg _ _ _ _ [] _ = []-- 
-hmapDataToSvg lang waterPath landPath teams fields units = unlines ([
-  "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>",
-  "<!-- Created by Atila Schrieber for Hadijáték -->\n",
-  "<svg",
-  " width=\"" ++ width ++ "\"",
-  " height=\"" ++ height ++ "\"",
-  " viewbox=\" -1 -1 " ++ width ++ " " ++ height ++ "\"",
-  " version=\"1.1\"\n id=\"Map\"\n xml:space=\"preserve\"\n xmlns=\"http://www.w3.org/2000/svg\"\n xmlns:svg=\"http://www.w3.org/2000/svg\"\n style=\"display:inline\" >\n",
-  " <!-- " ++ ["Mezők", "Fields"] !! lang ++ " -->"] ++
+hmapDataToSvg lang waterPath landPath teams fields units = unlines (
+  [ "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>"
+  , "<!-- Created by Atila Schrieber for Hadijáték -->\n"
+  , "<svg"
+  , " width=\"" ++ width ++ "\""
+  , " height=\"" ++ height ++ "\""
+  , " viewbox=\" -1 -1 " ++ width ++ " " ++ height ++ "\""
+  , " version=\"1.1\"\n id=\"Map\"\n xml:space=\"preserve\"\n xmlns=\"http://www.w3.org/2000/svg\"\n xmlns:svg=\"http://www.w3.org/2000/svg\"\n style=\"display:inline\" >\n"
+  , " <!-- " ++ ["Háttér", "Background"] !! lang ++ " -->"
+  , " <rect x=\"-1\" y=\"-1\" width=\"" ++ width ++ "\" height=\"" ++ height ++ "\" style=\"fill:#555555\" />"
+  , ""
+  , " <!-- " ++ ["Mezők", "Fields"] !! lang ++ " -->"
+  ] ++
   map (fieldToPath lang waterPath landPath teams) (sortFieldsByType fields)) ++
   "\n <!-- " ++ ["Egységek", "Units"] !! lang ++ " -->\n" ++
   unlines (map (unitToPath lang fields teams (2/3 * avgSize, 15, 20)) units) ++

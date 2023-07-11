@@ -200,6 +200,7 @@ unitName lang unit = --
   3 -> ["Szupertank", "Supertank"] !! lang
   4 -> ["Tengeralattjáró", "Submarine"] !! lang
   5 -> ["Tüzérség", "Artillery"] !! lang
+  _ -> "? unitName error ?"
  where t = either unitType id unit-- 
 
 -- Name of order - retreat & death not included
@@ -212,12 +213,13 @@ orderName lang order = --
   3 -> ["Átalakul", "Transforms"] !! lang
   4 -> ["Zárótűz", "Bombards"] !! lang
   5 -> ["Felállít", "Summoned"] !! lang
+  _ -> "? probs retreat ?"
  where t = either orderType id order-- 
 
 showOrderToActions :: Lang -> Teams -> Fields -> Units -> Order -> String 
 showOrderToActions lang teams fields units (Order f _ (_,_) _) = -- 
   fieldName (fields !! f) ++ " " ++
-  maybe "?" teamName (teamOfOrder teams units order) ++ " " ++
+  maybe "? unknown team ?" teamName (teamOfOrder teams units order) ++ " " ++
   unitName lang (Left . head . filter (\u -> unitField u == f) $ units) ++ " "
   where
     order = Order f 0 (True,[]) Unresolved-- 
@@ -225,18 +227,16 @@ showOrderToActions lang teams fields units (Order f _ (_,_) _) = --
 showOrderToTargets :: Lang -> Teams -> Fields -> Units -> Order -> String
 showOrderToTargets lang teams fields units (Order f t (_,_) _) = -- 
   showOrderToActions lang teams fields units (Order f 0 (False,[]) Unresolved) ++
-  orderName lang (Right t) ++ " "
+  orderName lang (Right t)
   where
     order = Order f t (True,[]) Unresolved-- 
 
 showOrderToAffects :: Lang -> Teams -> Fields -> Units -> Order -> String
 showOrderToAffects lang teams fields units (Order f t (b,as) _) = -- 
   showOrderToTargets lang teams fields units (Order f t (False,[]) Unresolved) ++
-  (if t /= 3
-   then if t /= 1 then fieldName (fields !! last as) else "" -- If anything but transforming, say fields
-   else unitName lang (Right $ last as)) -- Otherwise, the unit name
+  (if t /= 1 then ' ' : fieldName (fields !! last as) else "") -- If anything but transforming, say fields
   ++ 
-  foldr (uncurry if') "" [
+  foldr (uncurry if') " " [
     (t == 0,if length as == 2
              then [" ", " through "] !! lang else ""),
     (t == 1,[", átengedve ", ", letting "] !! lang),
@@ -257,7 +257,8 @@ showOrderPretty lang teams fields units (Order f t (b,as) _) = --
     (t == 1,(drop 2 . concat . map (\tid -> ", " ++ teamName (teams !! tid)) . init $ as) ++
               if b then ["mindenkit"," everyone"] !! lang else "" ++
              ["", " through"] !! lang ), -- List all teams which are let through
-    (t == 2, teamName (teams !! head as) ++ ")")] -- The team supported
+    (t == 2, teamName (teams !! head as) ++ ")"),
+    (t == 3, unitName lang $ Right (head as))] -- The team supported
   where
     order = Order f t (b,as) Unresolved-- 
 
@@ -300,8 +301,10 @@ getAdjacency fields = elementwise (+) adjs $ M.transpose adjs--
       [[if i > j
           then if fieldsAreNeighbors (fields !! i) (fields !! j) then 1 else 0
           else 0           -- Need to mirror
-        | i <- [0..(length fields -1)] ]
-       | j <- [0..(length fields -1)] ]-- 
+        | i <- [0..(length fields -1)] 
+        ]
+       | j <- [0..(length fields -1)]
+       ] 
 
 getWaterAdjacency :: Fields -> Adjacencies
 getWaterAdjacency fields = elementwise (+) wadjs $ M.transpose wadjs-- 
@@ -319,10 +322,11 @@ getWaterAdjacency fields = elementwise (+) wadjs $ M.transpose wadjs--
           let fj = fields !! j,
           let isWater = \f -> fieldType f == 0,
           let coords = pathToCoordinates . path,
+          let round' (x, y) = (round x, round y),
           let sharePointWithWater = 
                 any ( /= []) .
-                map (intersect $ intersect (coords fi) (coords fj)) .
-                map coords .
+                map (intersect $ map round' $ intersect (coords fi) (coords fj)) .
+                map (map round' . coords) .
                 filter isWater $
                 fields,
           let adjWaters = \f -> filter isWater . filter (fieldsAreNeighbors f) $ fields ]
@@ -403,6 +407,9 @@ fix f a
 if' :: Bool -> a -> a -> a
 if' True  x _ = x-- 
 if' False _ y = y
+
+condCons :: Bool -> a -> [a] -> [a]
+condCons cond a as = if cond then a:as else as
 
 -- select = foldr (uncurry if') -- base case, list of (condition, expression)
 

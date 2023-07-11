@@ -38,7 +38,7 @@ resolveConflict lang teams fields units orders = do -- resolve a single conflict
 
 resolveConflicts :: Lang -> Teams -> Fields -> Units -> Orders -> IO Orders
 resolveConflicts lang teams fields units orders = do -- Resolve a round of conflicts, map failed orders, return final orders
-  let conflicts = detectConflicts teams fields units orders
+  let conflicts = detectConficts' teams fields units orders
   if (not . null) conflicts --
   then do
     putStrLn $ ["A vizsgálat alatt lévő lépések (vedd figyelembe, hogy mely parancsok bukhatnak meg előbb):",
@@ -73,12 +73,12 @@ resolveAllConflicts lang teams fields units orders = do--
 resolveTurn :: Lang -> Teams -> Fields -> BothAdjacencies -> Units -> Orders -> IO (Teams, Units, [Orders])
 resolveTurn lang teams fields badjs units0 orders0 = do -- Return updated teams, fields, units, and a list of orders, first being input orders, the rest being "intermediate" orders, and the last being retrats
   let (units, orders) = applyDeltaOrders teams fields units0 orders0 -- apply get usable units & orders
+  putStrLn . unlines . map (\o -> "- " ++ showOrderPretty lang teams fields units o) $ orders
   resolvedOrders <- resolveAllConflicts lang teams fields units orders -- gets orders which are all successful
   let mappedOrders = map mapSucceededOrder resolvedOrders -- returns applicable orders
   let applicableOrders = map (checkForDeath teams fields badjs units orders) mappedOrders -- finds orders which kill units, make that clear
   let retreatOrders = filter (\o -> orderType o == (-1) && (not . fst . orderAffects $ o)) applicableOrders -- list of retreat orders, will be written to the .retreat (alongside which units to remove)
   let (appliedTeams, appliedUnits) = applyOrders teams fields units applicableOrders
-  putStrLn . unlines . map (\o -> "- " ++ showOrderPretty lang teams fields units o) $ orders
   putStrLn . unlines . map (\o -> "->" ++ showOrderPretty lang teams fields units o) $ resolvedOrders
   putStrLn . unlines . map (\o -> "=>" ++ showOrderPretty lang teams fields units o) $ mappedOrders
   putStrLn . unlines . map (\o -> ">>" ++ showOrderPretty lang teams fields units o) $ applicableOrders

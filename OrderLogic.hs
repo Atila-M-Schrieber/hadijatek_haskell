@@ -1,9 +1,13 @@
+{-# LANGUAGE ParallelListComp #-}
+
 module OrderLogic where
 import Hadijatek
 
 import Data.List
 import Data.Maybe
 import Data.Matrix as M
+
+import Control.Parallel
 
 import Debug.Trace as D
 
@@ -33,12 +37,18 @@ adjRowToIDs :: [Int] -> [Int] -- Takes row of adjacency matrix, returns id's of 
 adjRowToIDs row = [n | n <- [0..(length row -1)], row !! n > 0]
 
 -- Returns unique fields which are n fields away, based on given adjacency map
-nAway :: Fields -> Adjacencies -> Int -> Field -> Fields
-nAway fields adjs n field = uniques-- 
+nAway' :: Fields -> Adjacencies -> Int -> Field -> Fields
+nAway' fields adjs n field = uniques-- 
   [field'
     | field' <- fields `except` field,
       let row = toLists (matrixNth adjs n) !! fieldID field,
       fieldID field' `elem` adjRowToIDs row]-- 
+
+nAway :: Fields -> Adjacencies -> Int -> Field -> Fields
+nAway fields adjs n field = map (\i -> fields !! i) adjIDs -- should be much faster
+  where
+    row = toLists (matrixNth adjs n) !! fieldID field
+    adjIDs = adjRowToIDs row
 
 -- nAway limited to fields limited to sea (t==(-1)), water (t==0), or land (t==1) -type movement, or (t==2) for everything (air)
 nAwayOn :: Fields -> BothAdjacencies -> Int -> Int -> Field -> Fields
@@ -140,12 +150,16 @@ getTargetableFields fields badjs action unit = filter isTargetable fields
   where
     uf = fields !! unitField unit
     ut = unitType unit
-    first = nAwayOn fields badjs 2 1 uf
-    second = nAwayOn fields badjs 2 2 uf
+    t' = [1,0,2,1,0,1] !! ut -- type of field which is attackable
+    t  = if action == 0
+        then t
+        else if t' >= 1 then 2 else 0 -- supportable fields (and bombardable fields)
+    first = nAwayOn fields badjs t 1 uf
+    second = nAwayOn fields badjs t 2 uf
     isOneRange = (ut `elem` [0,1,3,5] && action == 0) || (ut `elem` [0..4] && action == 2)
     inrange = if isOneRange
               then first
-              else second 
+              else uniques $ first ++ second 
     isTargetable field = 
       field `elem` inrange
         {-      && (not . null) 
@@ -157,7 +171,7 @@ getTargetableFields fields badjs action unit = filter isTargetable fields
           , let as = map fieldID as'
           , isOrderLegal fields badjs [unit] $ Order (unitField unit) action (True,as) Unresolved
           ]
-          -}
+          --}
 
 
 applyDeltaOrders :: Teams -> Fields -> Units -> Orders -> (Units, Orders)
@@ -267,8 +281,8 @@ sortOrdersByField = sortBy (\(Order f1 _ (_, _) _) (Order f2 _ (_, _) _) -> comp
 sortOrdersByTarget :: Orders -> Orders
 sortOrdersByTarget = sortBy (\(Order _ _ (_, a1) _) (Order _ _ (_, a2) _) -> compare (last a1) (last a2))
 
-detectConflicts :: Teams -> Fields -> Units -> Orders -> [Orders] -- Returns conflicting orders, in list of conflicts
-detectConflicts teams fields units orders = -- Assumes new units have been applied (applyDeltaOrders)
+detectConficts' :: Teams -> Fields -> Units -> Orders -> [Orders] -- Returns conflicting orders, in list of conflicts
+detectConficts' teams fields units orders = -- Assumes new units have been applied (applyDeltaOrders)
   uniqueNonSubsetElems .  -- Unique conflicts (otherwise they'd show up at least 2x, and each support would show up separately)
   filter (\cs -> length cs > 1) . -- more than just the order
   zipWith (:) orders . -- add order itself to conflict
@@ -306,27 +320,157 @@ detectConflicts teams fields units orders = -- Assumes new units have been appli
       else if orderType o `elem` [0,1]
         then Left (teamID . fromJust . teamOfOrder teams units $ o) -- team of attacker/defender
         else Right o -- or just the order
-    isConflicting o1 o2 = -- does o1 conflict with o2 -- TODO sort according to type of conflict
+    isConflictingTargets o1 o2 = -- does o1 conflict with o2 - same targets
       (target o1 == target o2 -- same targets
-        && supportedTeam o1 /= supportedTeam o2) -- only false if both orders are in support of the same team
-      || (or . map-- 
-          (\(os, oa) -> orderType os `elem` [2,3,4] -- if os is stationary
-                        && target oa == orderField os) -- and oa targets os
-          $ [(o2,o1),(o1,o2)]) -- combinations of o1 and o2
-      || (or . map-- 
-          (\(om, od) -> 
-            orderType om == 0 -- o"movement" must be moving
-            && (
-               (orderType od == 1 -- If od is defending
-                && orderField od `elem` (flyovers om ++ passthroughs om) -- od is defending where om is flying over / passing through
-                && not (tidOfOrder om `elem` (init . snd . orderAffects $ od)
-                        || (fst . orderAffects $ od)) ) -- od does not allow team of om through, and it's not a failed static order (indicated by the True)
-               || (orderType od == 2 -- if supporting
-                   && orderField od `elem` flyovers om -- om *flies over* od (subject to change)
-                   && not (tidOfOrder om `elem` (init . snd . orderAffects $ od))) -- od is not supporting th team of om
-               || (orderType od == 4 -- if od is bombarding
-                   && target od `elem` flyovers om) -- om *flies over* bombardment
-               ))
-          $ [(o2,o1),(o1,o2)]) -- order 1 tries to "pass through" field defended by o2 (strait or flying over / swimming under) (or vice versa)
-    conflictingWith o = filter (isConflicting o) orders-- list of all orders which conflict with o. o does not conflict with itself, or supporting units
+      && supportedTeam o1 /= supportedTeam o2
+      && (orderType o1 /= orderType o2 || 1 `elem` [orderType o1, orderType o2])
+      && (null . intersect [-1,3]) [orderType o1, orderType o2]
+      ) -- only false if both orders are in support of the same team
+    isConflictingStationary o1 o2 = -- does o1 conflict with o2 - attacked / bombarded stationary
+      (or . map-- 
+       (\(os, oa) -> orderType os `elem` [2,3,4] -- if os is stationary
+                     && target oa == orderField os
+                     && orderType oa `elem` [0,4]) -- and oa targets os
+       $ [(o2,o1),(o1,o2)]) -- combinations of o1 and o2
+    isConflictingPass o1 o2 = -- does o1 conflict with o2 - flyover / passthrough
+      (or . map-- 
+       (\(om, od) -> 
+         orderType om == 0 -- o"movement" must be moving
+         && (
+            (orderType od == 1 -- If od is defending
+             && orderField od `elem` (flyovers om ++ passthroughs om) -- od is defending where om is flying over / passing through
+             && not (tidOfOrder om `elem` (init . snd . orderAffects $ od)
+                     || (fst . orderAffects $ od)) ) -- od does not allow team of om through, and it's not a failed static order (indicated by the True)
+            || (orderType od == 2 -- if supporting
+                && orderField od `elem` flyovers om -- om *flies over* od (subject to change)
+                && not (tidOfOrder om `elem` (init . snd . orderAffects $ od))) -- od is not supporting th team of om
+            || (orderType od == 4 -- if od is bombarding
+                && target od `elem` flyovers om) -- om *flies over* bombardment
+            ))
+       $ [(o2,o1),(o1,o2)]) -- order 1 tries to "pass through" field defended by o2 (strait or flying over / swimming under) (or vice versa)
+    conflictingWith o = filter (isConflictingTargets o) orders 
+                     ++ filter (isConflictingStationary o) orders
+                     ++ filter (isConflictingPass o) orders -- list of all orders which conflict with o. o does not conflict with itself, or supporting units, in order of passthroughs, attacked statics, and regular attack/defense
 
+ordersThroughField :: Fields -> BothAdjacencies -> Orders -> Field -> [(Int, Order)] -- interactionType, order - interaction types + order types = conflict type
+ordersThroughField fields badjs orders field = 
+  [ (interactType order, order)
+  | order <- orders
+  , interacts order
+  ]
+  where 
+    target = last . snd . orderAffects -- field which unit is targeting
+    fid = fieldID field
+    waterNeighbors = nAwayOn fields badjs 0 1 field
+    flyover order = fid `elem` (snd . orderAffects) order -- includes plane & soubmarine movements
+    straitSides = head -- fields on each side of the strait (if field is a strait)
+      [(fieldID s1, fieldID s2)
+      | s1 <- waterNeighbors
+      , s2 <- waterNeighbors
+      , s1 /= s2 -- not the same field
+      , s1 `elem` nAwayOn fields badjs (-1) 1 s2 -- s1 and s2 are neighbors by sea, therefore both must be sea
+      ]
+    passthrough order = -- movement passes through strait
+      if isFieldStrait field
+      then any (== straitSides) $
+        [(orderField order, head . snd . orderAffects $ order) -- first bit of move through strait
+        ,(head . snd . orderAffects $ order, target order)] -- second bit of move through strait
+      else False
+    transfer order = orderType order == 0 && (flyover order || passthrough order)
+    targeted order = fid == target order
+    startedFrom order = fid == orderField order
+    interacts order = startedFrom order || targeted order || transfer order
+    interactType order = foldr (uncurry if') 0 -- 0 is startedFrom
+      [(targeted order, 1)
+      ,(transfer order, 2)
+      ]
+
+  {-detectConflictsCategorized :: Teams -> Fields -> BothAdjacencies -> Units -> Orders -> [(Int, Orders)]
+detectConflictsCategorized teams fields badjs units orders = rawConflicts
+  where
+    allFields = map (ordersThroughField fields badjs orders) fields
+    canBeConflict = filter (\c -> length c >= 2) allFields
+    --TODO: restructure so index of order is returned as well
+    -- maybe by having conflicType as input, and returning concat of lists?
+    -- might not need complicated filterConflict
+    conflictType conflict = foldr (uncurry if') (-1) -- -1 is not a conflict, to be filtered
+      [(not . null . intersect $ -- enemy unit which started on a field targeted by a support trying to fly over the supporting unit
+        [() -- fields which moving unit travels through
+        | io <- conflict
+        , fst io == 2 -- flies through field
+        , orderType (snd io) == 0
+        ]
+        [() -- field of supporting order
+        | io <- conflict
+        , orderType (snd io) == 2
+        , let as = snd . orderAffects . snd $ io
+        , not (unitTeam (units !! last as) -- flyover unit is enemy
+               == head as)
+        ]
+       , 4) -- support flyover conflict - this should end up failing the flyover, and becoming a regular a/d conflict
+      ,(not . null . intersect $ -- actively defending unit being flown over / passed through
+        [teamOfOrder teams units (snd io) -- list of teams of any transfering orders
+        | io <- conflict
+        , fst io == 2 -- transfering order
+        ]
+        [teamOfOrder teams units (snd io) -- list of the team of the defender
+        | io <- conflict
+        , orderType (snd io) == 1
+        ]
+       , 3) -- transfer conflict
+      ,(not . null . intersect $ -- static unit being attacked / bombarded
+        [() -- static unit is there (empty tuple)
+        | io <- conflict
+        , fst io == 0
+        , orderType (snd io) >= 2
+        ]
+        [() -- attacking/bombarding unit(s)
+        | io <- conflict
+        , fst io == 1 -- targeting order
+        , orderType (snd io) `elem` [0,4] -- attacking or bombarding
+        ]
+       , 2) -- interrupted static conflict
+      ,(not . null . intersect $ -- regular attack/defense 
+        [() -- attack(s)
+        | io <- conflict
+        , fst io == 1
+        , orderType (snd io) == 0
+        ]
+        [() -- defense and bombardments
+        | io <- conflict
+        , fst io == 1
+        , orderType (snd io) `elem` [1,4]
+        ]
+       , 1) -- attack/defense conflict
+      ,(not . null . intersect $ -- bombarded defense
+        [() -- bombardment(s)
+        | io <- conflict
+        , fst io == 1
+        , orderType (snd io) == 4
+        ]
+        [() -- defense
+        | io <- conflict
+        , fst io == 1
+        , orderType (snd io) == 1
+        ]
+       , 0) -- bombarded defense conflict
+      ]
+    rawConflicts = [(ct, (snd nos)) | nos <- canBeConflict
+                   , let ct = conflictType (snd nos), ct /= (-1)] -- conflicts where involved orders have not been filtered
+    filterConflict (ct, os) = (ct, foldr (uncurry if') os
+      [(ct == 4
+       , [])
+       (ct == 3
+       , [])
+       (ct == 2
+       , [])
+       (ct == 1
+       , [])
+       (ct == 0
+       , [])
+      ])
+
+    -- -need some new thing for bombarded defense
+    -- need function to remove unnecessary startedFrom orders from conflicts where it's irrelevant
+    -- need to remove non-conflicting flyovers
+    -- -}

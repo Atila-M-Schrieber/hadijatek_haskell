@@ -130,7 +130,7 @@ newUnitsPage lang passons mField mType mturnPath step teams fields units mtid or
       , let fid = fhbs !! i] --
     unitOpts = --
       [option ! [value . show $ t] << unitName lang (Right t) -- no check for putting water unit on landlocked field
-      | let opts = 0 : 1 : if dsuper > 0 then [2..5] else []
+      | let opts = 0 : 1 : if dsuper > 0 then [2..5] else [] 
       , t <- opts
       ] -- 
     newUnitSelection = form ! [method "post"] << --
@@ -187,7 +187,19 @@ ordersPage lang passons mclear teams fields badjs units' mtid orders progress ac
         3 -> hidden ("target" ++ show (unitField unit)) . show $ unitField unit -- transforming then targeting itself - unitType chosen later
         _ -> defaultSelect unit "target" <<
                [option ! [value . show . fieldID $ field] << fieldName field
-               | field <- fields] -- getTargetableFields fields (findAction unit) unit] -- works, but slow, just check legality @ end
+               | let uf = fields !! unitField unit
+               , let ut = unitType unit
+               , let action = findAction unit
+               , let t' = [1,0,2,1,0,1] !! ut
+               , let t = if findAction unit == 0 then t' else if t' >= 1 then 2 else 0
+               , let isOneRange = (ut `elem` [0,1,3,5] && action == 0) || (ut `elem` [0..4] && action == 2)
+               , let first = uf : nAwayOn fields badjs t 1 uf
+               , let targetables = 
+                       uniques $
+                         first ++ if isOneRange then []
+                                  else nAwayOn fields badjs t 2 uf
+               , field <- targetables
+               ] -- getTargetableFields fields (findAction unit) unit] -- works, but slow, just check legality @ end
     -- affectSelect unit (based off actions & targets)
     conq unit = "conq" ++ show (unitField unit)
     teamSelect t unit = 
@@ -199,20 +211,23 @@ ordersPage lang passons mclear teams fields badjs units' mtid orders progress ac
       , let chkd = if teamID team == tid then [checked, ident] else [ident]
       ] +++
       hidden (conq unit) "False"
+    targetableType unit = if unitType unit == 2 then 2 else (-1) -- any if plane, only sea if soubmarine for intermediate field
+    neighbors t f = nAwayOn fields badjs t 1 f
+    commonNeighbors unit =
+      intersect
+        (neighbors (targetableType unit) $ fields !! unitField unit)
+        (neighbors (targetableType unit) $ fields !! findTarget unit)
     affectSelect unit = --
       case findAction unit of
-        0 -> (if fields !! (findTarget unit) `elem` nAwayOn fields badjs 2 1 (fields !! unitField unit) || unitField unit == findTarget unit -- (conquer in place)
+        0 -> (if not (unitType unit `elem` [2,4]) || unitField unit == findTarget unit -- fields !! (findTarget unit) `elem` nAwayOn fields badjs 2 1 (fields !! unitField unit) || unitField unit == findTarget unit -- (conquer in place)
               then noHtml
-              else defaultSelect unit "affect" <<
-                [option ! [value . show . fieldID $ field] << fieldName field
-                 | field <- fields])
-                {-defaultSelect unit "affect" << -- does not work???
-                  [option ! [value . show .fieldID $ field] << fieldName field
+              else defaultSelect unit "affect" << -- empty select when going 1 from eg. island to sea, maybe remove select then?
+                condCons (fields !! findTarget unit `elem` neighbors 2 (fields !! unitField unit)) -- here must be valid target, therefore if neighboring, offer option of direct attack
+                  (option ! [value "-1"] << ["Közvetlen támad", "Attacks directly"] !! lang)
+                  [option ! [value . show . fieldID $ field] << fieldName field
                   | field <- fields
-                  , fieldsAreNeighbors field (fields !! unitField unit) -- neighbors starting field
-                  , fieldsAreNeighbors field (fields !! findTarget unit) -- and the target
-                  ]
-             -}
+                  , field `elem` commonNeighbors unit
+                  ])
              +++
              label  ! [thefor $ conq unit ++ "T"] << (" - " ++ ["Foglal", "Conquers"] !! lang) +++
              (radio ! [checked, identifier (conq unit ++ "T")]) (conq unit) "True" +++
@@ -226,7 +241,7 @@ ordersPage lang passons mclear teams fields badjs units' mtid orders progress ac
                , uid /= unitType unit ])
              +++ hidden (conq unit) "False"
 
-        _ -> const noHtml unit --
+        _ -> hidden (conq unit) "False" --
 
     order unit = Order (unitField unit) (findAction unit) ((fst . findAffect $ unit), (snd . findAffect $ unit) ++ [findTarget unit]) Unresolved
     selectPrefixAffect unit = 
@@ -398,8 +413,8 @@ cgiMain = do
                 , fst input =~ "conq.+"
                 , let f = read (dropUntils "conq" . fst $ input) :: Int
                 , let b = read (snd input) :: Bool
-                , let as' = filter (\a -> fst a =~ ("affect" ++ show f)) allInputs
-                , let as = map (\a -> read (snd a) :: Int) as'] ++
+                , let as' = filter (\a -> fst a =~ ("affect" ++ show f ++ "$")) allInputs
+                , let as = [read (snd a) :: Int | a <- as', snd a /= "-1"] ]++ -- to "remove" direct attacks
                 if null affects' then [] else read affects' :: [(Int,(Bool, [Int]))] --
   let progress = length . filter (not . null) $ [actions, targets, map (\_ -> (0,0)) affects]
   ordersDone <- getInput "ordersDone"
@@ -441,7 +456,7 @@ cgiMain = do
         ++ [rPage] -- no passons, so fails on rejectBadPassword
   let diags = if isJust diagnostics
               then paragraph <<
-                (show mturnPath ++ " " ++ show code
+                ("Step " ++ show step ++ ", " ++ show mturnPath ++ " " ++ show code
                 ++ show actions ++ show targets ++ show affects
                 ++ " , " ++ show progress ++ "\n" ++ show allInputs)
               else noHtml
